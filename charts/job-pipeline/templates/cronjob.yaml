@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "job-pipeline.fullname" . }}-run
+  labels:
+    {{- include "job-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pipeline
+spec:
+  schedule: {{ .Values.pipeline.schedule | quote }}
+  suspend: {{ .Values.pipeline.suspend }}
+  # A slow scrape must not overlap with the next scheduled run.
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "job-pipeline.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: pipeline
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- include "job-pipeline.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: pipeline
+              image: {{ include "job-pipeline.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["jobpipeline", "run"]
+              {{- include "job-pipeline.env" . | nindent 14 }}
+              resources:
+                {{- toYaml .Values.pipeline.resources | nindent 16 }}
+              securityContext:
+                {{- include "job-pipeline.securityContext" . | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}

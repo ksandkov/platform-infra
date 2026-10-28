@@ -1,0 +1,6 @@
+apiVersion: v2
+name: job-pipeline
+description: Deploys job-pipeline (API, scheduled pipeline run, migrations) and an in-cluster Postgres.
+type: application
+version: 0.1.0
+appVersion: "d87f3c65f2508e31401ac99391a6b64439fe0959"

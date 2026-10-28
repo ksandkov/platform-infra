@@ -1,0 +1,51 @@
+# Runs `alembic upgrade head` after every install/upgrade.
+# post-* (not pre-*) because the in-cluster Postgres is part of the same release and must exist first.
+# Argo CD maps these Helm hooks to PostSync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "job-pipeline.fullname" . }}-migrate
+  labels:
+    {{- include "job-pipeline.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "job-pipeline.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "job-pipeline.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.postgres.image }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.database.existingSecret }}
+          command:
+            - sh
+            - -c
+            # -U is required: the non-root UID has no passwd entry, so pg_isready can't derive a user name.
+            - until pg_isready -h {{ include "job-pipeline.fullname" . }}-postgres -U "$POSTGRES_USER"; do sleep 2; done
+          securityContext:
+            {{- include "job-pipeline.securityContext" . | nindent 12 }}
+      containers:
+        - name: migrate
+          image: {{ include "job-pipeline.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          {{- include "job-pipeline.env" . | nindent 10 }}
+          securityContext:
+            {{- include "job-pipeline.securityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,60 @@
+image:
+  repository: ghcr.io/ksandkov/job-pipeline
+  # Defaults to the chart appVersion (a job-pipeline commit SHA, matching the CI image tag).
+  tag: ""
+  pullPolicy: IfNotPresent
+
+api:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# `jobpipeline run` on a schedule.
+pipeline:
+  schedule: "0 */6 * * *"
+  suspend: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+# Non-secret settings, passed to the app as environment variables.
+config:
+  LOG_LEVEL: INFO
+  CLAUDE_MODEL: claude-haiku-4-5-20251001
+  # The Ollama tier is not deployed in the cluster yet.
+  ENABLE_LOCAL_TIER: "false"
+  JOBSPY_SEARCH_TERM: platform engineer
+  JOBSPY_LOCATION: Toronto, ON
+  JOBSPY_RESULTS: "50"
+
+# Secret with key ANTHROPIC_API_KEY. Created outside the chart so the key never lands in Git.
+# Optional: without it the API runs, but pipeline runs cannot score jobs.
+anthropic:
+  existingSecret: job-pipeline-anthropic
+
+# Secret with POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB and DATABASE_URL, created outside the chart.
+# Postgres and the app both read their database settings from it.
+database:
+  existingSecret: job-pipeline-postgres
+
+# In-cluster Postgres for local and demo environments.
+postgres:
+  image: postgres:16-alpine
+  storage: 1Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+ingress:
+  className: traefik
+  host: job-pipeline.localhost
