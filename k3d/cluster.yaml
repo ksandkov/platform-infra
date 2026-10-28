@@ -1,0 +1,11 @@
+# Local single-node k3s cluster. Traefik (bundled with k3s) serves ingress on localhost:8080.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: platform
+servers: 1
+agents: 0
+ports:
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
