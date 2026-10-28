@@ -1,10 +1,5 @@
 # Overrides for the local k3d cluster.
 
-image:
-  # The CI image is amd64-only; locally we build the same commit for the host
-  # architecture and import it into k3d (see `make image`).
-  pullPolicy: Never
-
 pipeline:
   # Run manually with `make run-pipeline` instead of on a schedule.
   suspend: true

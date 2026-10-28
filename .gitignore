@@ -1,5 +1,2 @@
-# Source checked out by `make image`
-.build/
-
 # macOS
 .DS_Store

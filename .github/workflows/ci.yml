@@ -36,8 +36,7 @@ jobs:
           helm template job-pipeline "$CHART" -f environments/local/values.yaml > rendered.yaml
           kubeconform -strict -summary rendered.yaml
 
-  # Deploys the real image from GHCR into a throwaway cluster. The runner is amd64,
-  # which matches the published image, so no local build is needed here.
+  # Deploys the real image from GHCR into a throwaway cluster.
   smoke:
     needs: lint
     runs-on: ubuntu-latest

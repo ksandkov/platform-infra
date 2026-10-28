@@ -1,27 +1,17 @@
 # platform-infra — local environment tasks
-.PHONY: up down cluster image secrets deploy run-pipeline status lint
+.PHONY: up down cluster secrets deploy run-pipeline status lint
 
 CLUSTER   := platform
 NAMESPACE := job-pipeline
 RELEASE   := job-pipeline
 CHART     := charts/job-pipeline
 VALUES    := environments/local/values.yaml
-APP_REPO  := https://github.com/ksandkov/job-pipeline.git
-APP_SHA   := $(shell awk -F'"' '/^appVersion:/ {print $$2}' $(CHART)/Chart.yaml)
-IMAGE     := ghcr.io/ksandkov/job-pipeline:$(APP_SHA)
 KUBECTL   := kubectl --context k3d-$(CLUSTER)
 
-up: cluster image secrets deploy  ## Create the cluster and deploy job-pipeline
+up: cluster secrets deploy  ## Create the cluster and deploy job-pipeline
 
 cluster:  ## Create the k3d cluster (no-op if it exists)
 	@k3d cluster list $(CLUSTER) >/dev/null 2>&1 || k3d cluster create --config k3d/cluster.yaml
-
-image:  ## Build the pinned job-pipeline commit for this machine's arch and load it into k3d
-	rm -rf .build/job-pipeline
-	git clone --quiet $(APP_REPO) .build/job-pipeline
-	git -C .build/job-pipeline checkout --quiet $(APP_SHA)
-	docker build -t $(IMAGE) .build/job-pipeline
-	k3d image import $(IMAGE) --cluster $(CLUSTER)
 
 secrets:  ## Create namespace and secrets (never stored in Git)
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -

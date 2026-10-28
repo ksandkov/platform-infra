@@ -35,7 +35,7 @@ Progress is tracked by working checkpoints, not dates. Each stage ends with its 
 Requires Docker, `k3d`, `helm` and `kubectl`.
 
 ```bash
-make up                      # cluster + image + secrets + Helm release (~80 s from scratch)
+make up                      # cluster + secrets + Helm release, image pulled from GHCR
 make status                  # what is running
 open http://job-pipeline.localhost:8080/
 make run-pipeline            # trigger one pipeline run now
@@ -89,19 +89,21 @@ For the cloud stage the options are a managed database (RDS) or keeping Postgres
 
 ## What broke and how I fixed it
 
-- **The CI image is amd64-only**, so it cannot run on an arm64 (Apple Silicon) k3d node.
-  Locally, `make image` builds the same pinned commit for the host architecture and imports it into k3d.
-  In CI the runner is amd64, so the smoke test uses the published image as is.
+- **The CI image was amd64-only**, so it could not run on an arm64 (Apple Silicon) k3d node.
+  At first `make image` rebuilt the pinned commit locally and imported it into k3d. The proper fix was in
+  job-pipeline CI: it now publishes a multi-arch image (amd64 + arm64), and every cluster pulls the same image from GHCR.
+- **`jobpipeline run` failed in the container image** with `FileNotFoundError`: `scoring/prompts/system.md`
+  was not included in the installed package. Fixed in job-pipeline by declaring it as package data.
+- **Then `jobpipeline run` failed with `TypeError: ... unexpected keyword argument 'temperature'`.** The anthropic SDK
+  dropped that argument in 1.0, and the unpinned dependency pulled 1.x into the image. Fixed in job-pipeline by
+  pinning `anthropic<1`.
 - **The migration Job hung in `Init`.** `pg_isready` printed `no attempt`: the pod runs as UID 10001,
   which has no `/etc/passwd` entry in the postgres image, so it could not derive a user name. Passing `-U` explicitly fixed it.
 
 ## Known issues (in job-pipeline, not fixed here)
 
-- **`jobpipeline run` fails in the container image**: `scoring/prompts/system.md` is not included in the
-  installed package (`FileNotFoundError`). This affects the published CI image as well.
-- **No arm64 image.** Needed before Argo CD can pull the published image on an Apple Silicon cluster.
 - **Pipeline metrics are not scrapeable.** `jobs_fetched_total`, `pipeline_errors_total` and the other pipeline
   metrics live in the short-lived CronJob process; the API's `/metrics` only exposes default process metrics.
   Monitoring in stage 5 covers the API only.
 - **Builds are not reproducible.** Dependencies use `>=` ranges without a lock file, so rebuilding the same commit
-  later pulls newer versions (the CI image has FastAPI 0.141, a rebuild today got 0.162).
+  later pulls newer versions. The anthropic break above is an example; a lock file would prevent it.
