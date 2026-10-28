@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CHART: charts/job-pipeline
+  HELM_VERSION: v4.3.1
+  KUBECONFORM_VERSION: v0.8.0
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+
+      - name: Helm lint
+        run: helm lint "$CHART" -f environments/local/values.yaml --strict
+
+      - name: Render and validate manifests against Kubernetes schemas
+        run: |
+          helm template job-pipeline "$CHART" -f environments/local/values.yaml > rendered.yaml
+          kubeconform -strict -summary rendered.yaml
+
+  # Deploys the real image from GHCR into a throwaway cluster. The runner is amd64,
+  # which matches the published image, so no local build is needed here.
+  smoke:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - uses: helm/kind-action@v1.15.0
+        with:
+          cluster_name: smoke
+
+      - name: Create namespace and secrets
+        run: |
+          kubectl create namespace job-pipeline
+          PASSWORD="$(openssl rand -hex 16)"
+          kubectl -n job-pipeline create secret generic job-pipeline-postgres \
+            --from-literal=POSTGRES_USER=jobpipeline \
+            --from-literal=POSTGRES_PASSWORD="$PASSWORD" \
+            --from-literal=POSTGRES_DB=jobpipeline \
+            --from-literal=DATABASE_URL="postgresql+psycopg://jobpipeline:$PASSWORD@job-pipeline-postgres:5432/jobpipeline"
+
+      # --wait also waits for the post-install migration hook to succeed.
+      - name: Install chart
+        run: |
+          helm install job-pipeline "$CHART" -n job-pipeline \
+            --set pipeline.suspend=true \
+            --wait --timeout 5m
+
+      - name: Check health endpoints
+        run: |
+          kubectl -n job-pipeline port-forward svc/job-pipeline-api 8080:80 &
+          curl -sf --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8080/healthz
+          curl -sf http://localhost:8080/readyz
+          curl -sf "http://localhost:8080/jobs?limit=1"
+
+      - name: Show cluster state on failure
+        if: failure()
+        run: |
+          kubectl -n job-pipeline get all
+          kubectl -n job-pipeline describe pods
+          kubectl -n job-pipeline logs --all-containers --prefix -l app.kubernetes.io/instance=job-pipeline --tail=50
