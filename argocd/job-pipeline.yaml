@@ -1,0 +1,24 @@
+# Argo CD deploys the chart from this repo's main branch and keeps the cluster in sync with it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: job-pipeline
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ksandkov/platform-infra.git
+    targetRevision: main
+    path: charts/job-pipeline
+    helm:
+      valueFiles:
+        - ../../environments/local/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: job-pipeline
+  syncPolicy:
+    automated:
+      # Delete resources that were removed from Git.
+      prune: true
+      # Undo manual changes made in the cluster.
+      selfHeal: true

@@ -9,6 +9,9 @@ job-pipeline repo                      platform-infra repo (this one)
 push → CI: test → build image  ──────► Helm chart pins the image tag (a commit SHA)
        ghcr.io/ksandkov/job-pipeline        │
                                             ▼
+                                       Argo CD watches main and syncs the cluster
+                                            │
+                                            ▼
                                        k3d cluster (local)
                                         ├─ Deployment   api (uvicorn), probes on /healthz and /readyz
                                         ├─ CronJob      `jobpipeline run` every 6h
@@ -26,7 +29,7 @@ Progress is tracked by working checkpoints, not dates. Each stage ends with its 
 | 1 | Local cluster: `make up` builds everything from scratch, `make down` removes it | done |
 | 2 | Helm + Postgres: app reachable, probes correct, migrations run, data survives a Postgres restart | done |
 | 3 | CI: a broken chart cannot pass; the real GHCR image deploys into a throwaway cluster | done |
-| 4 | Argo CD: changing the image version in Git deploys it, `git revert` rolls back, manual changes are reverted | planned |
+| 4 | Argo CD: the app is deployed from Git, manual changes in the cluster are reverted | done |
 | 5 | Monitoring: Prometheus and Grafana show API metrics, one alert fires in a test scenario | planned |
 | 6 | Terraform: one EC2 instance with k3s on AWS, `apply` and `destroy` | planned |
 
@@ -35,8 +38,9 @@ Progress is tracked by working checkpoints, not dates. Each stage ends with its 
 Requires Docker, `k3d`, `helm` and `kubectl`.
 
 ```bash
-make up                      # cluster + secrets + Helm release, image pulled from GHCR
+make up                      # cluster + secrets + Argo CD, which then deploys the app from Git
 make status                  # what is running
+make argocd-ui               # Argo CD UI on https://localhost:8443 (user: admin)
 open http://job-pipeline.localhost:8080/
 make run-pipeline            # trigger one pipeline run now
 make lint                    # the same chart checks as CI
@@ -44,6 +48,8 @@ make down                    # delete the cluster
 ```
 
 Set `ANTHROPIC_API_KEY` in your shell before `make up` (or re-run `make secrets`) to let pipeline runs score jobs.
+
+Argo CD deploys what is on the `main` branch on GitHub, not local files: a chart change reaches the cluster after it is pushed.
 
 ## CI
 
@@ -66,15 +72,18 @@ The lint job was checked against deliberately broken charts. Each one was reject
 - `make down && make up` brings everything back from nothing with no manual steps.
 - **Data survives a Postgres restart**: a row was inserted, the `postgres-0` pod was deleted and recreated
   (new UID), and the row was still returned by `/jobs`. The API reconnected on its own.
+- **Argo CD reverts manual changes**: the API Deployment was scaled to 0 with `kubectl`, and Argo CD set it back to 1 replica within seconds.
 
 ## Design decisions
 
+- **GitOps with Argo CD.** The cluster state is described in Git; Argo CD applies it and undoes manual changes.
+  The only things applied by hand are the cluster, the Secrets and the Argo CD Application itself (`make up`).
 - **No secrets in Git.** The chart only references Secrets by name (`existingSecret`).
   `make secrets` creates them: database credentials with a random password and a ready-made `DATABASE_URL`,
   and, if present, the Anthropic key from the environment. In production this would be Sealed Secrets or External Secrets.
 - **Image pinned by commit SHA**, not `latest`. A new app version is a one-line change to `appVersion` in a PR,
   and rolling back is a `git revert`.
-- **Migrations as a post-install/post-upgrade hook.** Post, not pre, because the in-cluster Postgres is part of the same release and has to exist first. An init container waits for the database.
+- **Migrations as a post-install/post-upgrade hook.** Post, not pre, because the in-cluster Postgres is part of the same release and has to exist first. An init container waits for the database. Argo CD runs this hook after every sync (`PostSync`); `alembic upgrade head` is safe to repeat.
 - **Liveness vs readiness.** `/healthz` never touches the database, so a database outage does not restart the API; `/readyz` does, so traffic only arrives once Postgres is reachable.
 - **Hardened app pods.** Non-root UID 10001 (matching the image), read-only root filesystem with an `emptyDir` for `/tmp`, all capabilities dropped, `RuntimeDefault` seccomp.
 - **`concurrencyPolicy: Forbid`** on the CronJob, so a slow scrape never overlaps with the next run.

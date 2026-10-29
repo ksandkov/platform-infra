@@ -1,5 +1,5 @@
 # platform-infra — local environment tasks
-.PHONY: up down cluster secrets deploy run-pipeline status lint
+.PHONY: up down cluster secrets argocd app argocd-ui run-pipeline status lint
 
 CLUSTER   := platform
 NAMESPACE := job-pipeline
@@ -7,8 +7,9 @@ RELEASE   := job-pipeline
 CHART     := charts/job-pipeline
 VALUES    := environments/local/values.yaml
 KUBECTL   := kubectl --context k3d-$(CLUSTER)
+ARGOCD_CHART_VERSION := 10.10.3
 
-up: cluster secrets deploy  ## Create the cluster and deploy job-pipeline
+up: cluster secrets argocd app  ## Create the cluster, install Argo CD and let it deploy job-pipeline
 
 cluster:  ## Create the k3d cluster (no-op if it exists)
 	@k3d cluster list $(CLUSTER) >/dev/null 2>&1 || k3d cluster create --config k3d/cluster.yaml
@@ -30,9 +31,16 @@ secrets:  ## Create namespace and secrets (never stored in Git)
 		echo "ANTHROPIC_API_KEY not set: API will run, pipeline runs cannot score jobs"; \
 	fi
 
-deploy:  ## Install or upgrade the Helm release
-	helm upgrade --install $(RELEASE) $(CHART) --kube-context k3d-$(CLUSTER) \
-		-n $(NAMESPACE) -f $(VALUES) --wait --timeout 5m
+argocd:  ## Install Argo CD
+	helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd --version $(ARGOCD_CHART_VERSION) \
+		--kube-context k3d-$(CLUSTER) -n argocd --create-namespace --wait --timeout 5m
+
+app:  ## Register job-pipeline with Argo CD (Argo CD then deploys it from Git)
+	$(KUBECTL) apply -f argocd/job-pipeline.yaml
+
+argocd-ui:  ## Open the Argo CD UI on https://localhost:8443 (user: admin)
+	@echo "password: $$($(KUBECTL) -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
+	$(KUBECTL) -n argocd port-forward svc/argocd-server 8443:443
 
 run-pipeline:  ## Trigger one pipeline run now
 	$(KUBECTL) -n $(NAMESPACE) create job --from=cronjob/$(RELEASE)-run $(RELEASE)-manual-$$(date +%s)
