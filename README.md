@@ -32,7 +32,7 @@ Progress is tracked by working checkpoints, not dates. Each stage ends with its 
 | 3 | CI: a broken chart cannot pass; the real GHCR image deploys into a throwaway cluster | done |
 | 4 | Argo CD: the app is deployed from Git, manual changes in the cluster are reverted | done |
 | 5 | Monitoring: Prometheus and Grafana show API metrics, one alert fires in a test scenario | done |
-| 6 | Terraform: one EC2 instance with k3s on AWS, `apply` and `destroy` | planned |
+| 6 | Terraform: one EC2 instance with k3s on AWS, `apply` and `destroy` | done |
 
 ## Run it
 
@@ -52,6 +52,21 @@ make down                    # delete the cluster
 Set `ANTHROPIC_API_KEY` in your shell before `make up` (or re-run `make secrets`) to let pipeline runs score jobs.
 
 Argo CD deploys what is on the `main` branch on GitHub, not local files: a chart change reaches the cluster after it is pushed.
+
+## Cloud: k3s on EC2
+
+`terraform/` creates one EC2 instance (`t3.small`, Ubuntu 24.04) in the default VPC of `us-east-1`. On first boot
+it installs k3s. Requires Terraform, the AWS CLI with credentials (`aws configure`) and `~/.ssh/id_ed25519.pub`.
+
+```bash
+cd terraform
+terraform init
+terraform apply -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
+ssh ubuntu@<public_ip> kubectl get nodes     # the command is printed as the ssh_command output
+terraform destroy -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
+```
+
+Only SSH is open, and only from `my_ip`. `kubectl` is run on the instance over SSH; the Kubernetes API is not exposed.
 
 ## CI
 
@@ -79,6 +94,9 @@ The lint job was checked against deliberately broken charts. Each one was reject
 - **The alert fires**: the API process was killed with `kubectl exec ... kill 1`, the container restarted, and
   `JobPipelineApiRestarted` went to `firing` in Prometheus and reached Alertmanager. The only other firing alert is
   `Watchdog`, which is meant to fire all the time to show that alerting works.
+- **Terraform creates and removes the cloud node**: `terraform apply` created the instance, security group and key pair;
+  about two minutes later `kubectl get nodes` over SSH showed the node `Ready` with the system pods running;
+  `terraform destroy` removed all three resources.
 
 ## Design decisions
 
@@ -96,13 +114,16 @@ The lint job was checked against deliberately broken charts. Each one was reject
 - **Liveness vs readiness.** `/healthz` never touches the database, so a database outage does not restart the API; `/readyz` does, so traffic only arrives once Postgres is reachable.
 - **Hardened app pods.** Non-root UID 10001 (matching the image), read-only root filesystem with an `emptyDir` for `/tmp`, all capabilities dropped, `RuntimeDefault` seccomp.
 - **`concurrencyPolicy: Forbid`** on the CronJob, so a slow scrape never overlaps with the next run.
+- **Terraform kept minimal.** The default VPC instead of a custom network, and one variable (`my_ip`).
+  State is a local file and is not committed (it can contain secrets); in a team it would live in an S3 bucket.
+  Provider and k3s versions are pinned, and `.terraform.lock.hcl` is committed.
 
 ## Postgres: demo, not production
 
 The in-cluster Postgres is a single pod with a local-path volume and no backups. That is fine for a local
 cluster and a demo, and it is **not** production-ready.
 
-For the cloud stage the options are a managed database (RDS) or keeping Postgres in the cluster with scheduled
+For production the options are a managed database (RDS) or keeping Postgres in the cluster with scheduled
 `pg_dump` backups to S3 and a documented restore.
 
 ## What broke and how I fixed it

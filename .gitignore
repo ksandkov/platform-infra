@@ -1,2 +1,6 @@
 # macOS
 .DS_Store
+# Terraform: local state and downloaded providers (state can contain secrets)
+.terraform/
+*.tfstate
+*.tfstate.*
