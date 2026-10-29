@@ -31,10 +31,12 @@ jobs:
       - name: Helm lint
         run: helm lint "$CHART" -f environments/local/values.yaml --strict
 
+      # ServiceMonitor and PrometheusRule are Prometheus Operator types, not built into Kubernetes,
+      # so kubeconform has no schema for them.
       - name: Render and validate manifests against Kubernetes schemas
         run: |
           helm template job-pipeline "$CHART" -f environments/local/values.yaml > rendered.yaml
-          kubeconform -strict -summary rendered.yaml
+          kubeconform -strict -summary -skip ServiceMonitor,PrometheusRule rendered.yaml
 
   # Deploys the real image from GHCR into a throwaway cluster.
   smoke:

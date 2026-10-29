@@ -1,0 +1,40 @@
+# kube-prometheus-stack: Prometheus, Grafana, Alertmanager and the exporters, installed by Argo CD.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 92.7.0
+    helm:
+      valuesObject:
+        # k3s runs these inside a single process, so there is nothing separate to scrape
+        # and their "target down" alerts would fire forever.
+        kubeScheduler:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        prometheus:
+          prometheusSpec:
+            # Pick up ServiceMonitors and alert rules from every namespace, not only from this release.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus CRDs are too large for a regular (client-side) apply.
+      - ServerSideApply=true

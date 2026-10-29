@@ -3,3 +3,6 @@
 pipeline:
   # Run manually with `make run-pipeline` instead of on a schedule.
   suspend: true
+
+monitoring:
+  enabled: true

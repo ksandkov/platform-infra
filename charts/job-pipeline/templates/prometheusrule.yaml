@@ -1,0 +1,18 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "job-pipeline.fullname" . }}
+  labels:
+    {{- include "job-pipeline.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: job-pipeline
+      rules:
+        - alert: JobPipelineApiRestarted
+          expr: increase(kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}", container="api"}[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: The job-pipeline API container restarted in the last 10 minutes.
+{{- end }}

@@ -58,3 +58,7 @@ postgres:
 ingress:
   className: traefik
   host: job-pipeline.localhost
+
+# ServiceMonitor and alert rule for Prometheus. Needs the Prometheus Operator CRDs (see argocd/monitoring.yaml).
+monitoring:
+  enabled: false

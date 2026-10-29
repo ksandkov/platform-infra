@@ -17,7 +17,8 @@ push → CI: test → build image  ──────► Helm chart pins the ima
                                         ├─ CronJob      `jobpipeline run` every 6h
                                         ├─ Job          `alembic upgrade head` after each release
                                         ├─ StatefulSet  Postgres 16 with a persistent volume (demo only, see below)
-                                        └─ Ingress      http://job-pipeline.localhost:8080
+                                        ├─ Ingress      http://job-pipeline.localhost:8080
+                                        └─ monitoring   Prometheus, Grafana, Alertmanager (kube-prometheus-stack)
 ```
 
 ## Roadmap
@@ -30,7 +31,7 @@ Progress is tracked by working checkpoints, not dates. Each stage ends with its 
 | 2 | Helm + Postgres: app reachable, probes correct, migrations run, data survives a Postgres restart | done |
 | 3 | CI: a broken chart cannot pass; the real GHCR image deploys into a throwaway cluster | done |
 | 4 | Argo CD: the app is deployed from Git, manual changes in the cluster are reverted | done |
-| 5 | Monitoring: Prometheus and Grafana show API metrics, one alert fires in a test scenario | planned |
+| 5 | Monitoring: Prometheus and Grafana show API metrics, one alert fires in a test scenario | done |
 | 6 | Terraform: one EC2 instance with k3s on AWS, `apply` and `destroy` | planned |
 
 ## Run it
@@ -41,6 +42,7 @@ Requires Docker, `k3d`, `helm` and `kubectl`.
 make up                      # cluster + secrets + Argo CD, which then deploys the app from Git
 make status                  # what is running
 make argocd-ui               # Argo CD UI on https://localhost:8443 (user: admin)
+make grafana                 # Grafana on http://localhost:3000 (user: admin)
 open http://job-pipeline.localhost:8080/
 make run-pipeline            # trigger one pipeline run now
 make lint                    # the same chart checks as CI
@@ -73,11 +75,18 @@ The lint job was checked against deliberately broken charts. Each one was reject
 - **Data survives a Postgres restart**: a row was inserted, the `postgres-0` pod was deleted and recreated
   (new UID), and the row was still returned by `/jobs`. The API reconnected on its own.
 - **Argo CD reverts manual changes**: the API Deployment was scaled to 0 with `kubectl`, and Argo CD set it back to 1 replica within seconds.
+- **Prometheus scrapes the API** (target `job-pipeline-api` is `up`), and its metrics can be queried in Grafana.
+- **The alert fires**: the API process was killed with `kubectl exec ... kill 1`, the container restarted, and
+  `JobPipelineApiRestarted` went to `firing` in Prometheus and reached Alertmanager. The only other firing alert is
+  `Watchdog`, which is meant to fire all the time to show that alerting works.
 
 ## Design decisions
 
 - **GitOps with Argo CD.** The cluster state is described in Git; Argo CD applies it and undoes manual changes.
   The only things applied by hand are the cluster, the Secrets and the Argo CD Application itself (`make up`).
+- **Monitoring with kube-prometheus-stack**, installed by Argo CD like the app. The chart adds a ServiceMonitor
+  (scrape the API's `/metrics`) and one alert rule. k3s runs the scheduler, controller manager, proxy and etcd in a
+  single process, so their scrape targets are disabled; otherwise their "target down" alerts would fire forever.
 - **No secrets in Git.** The chart only references Secrets by name (`existingSecret`).
   `make secrets` creates them: database credentials with a random password and a ready-made `DATABASE_URL`,
   and, if present, the Anthropic key from the environment. In production this would be Sealed Secrets or External Secrets.
